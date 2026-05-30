@@ -1,0 +1,27 @@
+sequenceDiagram
+    autonumber
+    participant CL as Clinician (Web)
+    participant LB as Load Balancer
+    participant REC as Recommendation Service (GKE)
+    participant PG as Cloud SQL
+    participant BQ as BigQuery Audit
+    participant FAM as Family Portal
+
+    CL->>LB: GET /patient/{id}/recommendation
+    LB->>REC: Forward (auth via service ingress)
+    REC->>PG: Fetch patient state + assessments
+    PG-->>REC: State + latest assessments
+    REC->>REC: Apply eligibility rules
+    REC->>REC: Run GBM ranking on eligible pathways
+    REC-->>LB: Ranked pathways + reasons
+    LB-->>CL: 200 OK with ranked list
+
+    Note over CL,REC: Clinician reviews, optionally overrides
+
+    CL->>LB: POST /patient/{id}/decision
+    LB->>REC: Forward decision
+    REC->>PG: Update patient pathway state
+    REC->>BQ: Append audit (recommendation + decision + clinician)
+    REC->>FAM: Publish notification (if consented + material change)
+    REC-->>LB: 200 OK
+    LB-->>CL: Decision confirmed

@@ -1,0 +1,107 @@
+flowchart TB
+    %% ============ SOURCES ============
+    subgraph SRC[Data Sources]
+        direction LR
+        EHR[EHR FHIR Feed<br/>Patient state events]
+        ASSESS[Clinical Assessment Tools<br/>Mobility, cognitive, social]
+        FAMILY[Family Portal<br/>Consent + preferences]
+    end
+
+    %% ============ EDGE / INGEST ============
+    subgraph EDGE[Edge & Ingest]
+        LB[Global HTTPS<br/>Load Balancer]
+        TOPIC[(Pub/Sub Topic<br/>State events)]
+    end
+
+    %% ============ PRE-PROCESSING ============
+    subgraph PREP[Pre-processing]
+        REDACT[Cloud Function<br/>PII redaction]
+        VAL[Cloud Function<br/>FHIR schema validation]
+    end
+
+    %% ============ RECOMMENDATION CORE ============
+    subgraph CORE[Recommendation Core - GKE Cluster]
+        direction TB
+        subgraph POD[Recommendation Pod - 2 containers]
+            direction LR
+            SIDE[Auth Sidecar<br/>Auth + access log + rate-limit]
+            REC[Recommendation Service<br/>Rules engine + GBM ranker]
+        end
+        HPA[Horizontal Pod<br/>Autoscaler]
+    end
+
+    %% ============ STORAGE ============
+    subgraph STORE[Storage Layer]
+        PG[(Cloud SQL<br/>Postgres HA<br/>Patient state + decisions)]
+        BQ[(BigQuery<br/>Immutable audit log)]
+        GCS[(Cloud Storage<br/>Raw assessments +<br/>model artefacts)]
+    end
+
+    %% ============ CONSUMPTION ============
+    subgraph CONS[Consumption]
+        CLIN[Clinician Dashboard<br/>Web]
+        FAMAPP[Family Portal<br/>Mobile]
+        HANDOFF[Handover Doc Generator<br/>PDF + FHIR bundle]
+        OPSDASH[Operations Dashboard<br/>Bed management]
+    end
+
+    %% ============ CROSS-CUTTING ============
+    subgraph OPSEC[Cross-cutting]
+        direction LR
+        IAM[IAM + Private VPC]
+        MON[Cloud Monitoring]
+        CICD[Cloud Build<br/>CI/CD]
+    end
+
+    %% ============ DESIGN-DECISION ANNOTATIONS ============
+    NOTE_PII[<b>Data minimisation gate:</b><br/>model never sees<br/>direct identifiers]
+    NOTE_SIDE[<b>Cross-cutting concerns isolated</b><br/>from main service so security logic<br/>can be updated independently]
+    NOTE_AUDIT[<b>Immutable audit:</b><br/>every recommendation +<br/>decision is traceable]
+    NOTE_HPA[<b>Scaled on queue depth,</b><br/>not CPU - the actual<br/>lagging indicator for this workload]
+
+    %% ============ DATA FLOW ============
+    EHR --> LB
+    ASSESS --> LB
+    FAMILY --> LB
+    LB --> TOPIC
+    TOPIC --> REDACT
+    REDACT --> VAL
+    VAL --> SIDE
+    SIDE --> REC
+    HPA -.->|scale| REC
+    GCS -.->|model artefacts at pod start| REC
+    REC --> PG
+    REC --> BQ
+    ASSESS -.->|raw| GCS
+    PG --> CLIN
+    PG --> FAMAPP
+    PG --> HANDOFF
+    PG --> OPSDASH
+    BQ --> OPSDASH
+    REC -.->|telemetry| MON
+    SIDE -.->|access logs| BQ
+
+    %% Annotation connections
+    REDACT -.- NOTE_PII
+    SIDE -.- NOTE_SIDE
+    BQ -.- NOTE_AUDIT
+    HPA -.- NOTE_HPA
+
+    %% ============ STYLING ============
+    classDef source fill:#e1f5fe,stroke:#0277bd
+    classDef edge fill:#fff3e0,stroke:#e65100
+    classDef prep fill:#f3e5f5,stroke:#6a1b9a
+    classDef core fill:#e8f5e9,stroke:#2e7d32,stroke-width:3px
+    classDef store fill:#fce4ec,stroke:#ad1457
+    classDef cons fill:#fff9c4,stroke:#f57f17
+    classDef ops fill:#eceff1,stroke:#37474f,stroke-dasharray: 5 5
+    classDef note fill:#fffde7,stroke:#f57c00,stroke-width:1.5px,stroke-dasharray:6 3,color:#3e2723
+
+    class EHR,ASSESS,FAMILY source
+    class LB,TOPIC edge
+    class REDACT,VAL prep
+    class REC,SIDE,HPA core
+    class PG,BQ,GCS store
+    class CLIN,FAMAPP,HANDOFF,OPSDASH cons
+    class IAM,MON,CICD ops
+    class NOTE_PII,NOTE_SIDE,NOTE_AUDIT,NOTE_HPA note
